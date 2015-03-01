@@ -17,7 +17,7 @@ try:
 except:
     from urllib.parse import urlencode
 
-logging.basicConfig(level=logging.DEBUG,format="%(asctime)-15s:%(levelname)s:%(threadName)s: %(message)s")
+logging.basicConfig(level=logging.INFO,format="%(asctime)-15s:%(levelname)s:%(threadName)s: %(message)s")
 log = logging.getLogger("net")
 
 class Conf:
@@ -236,13 +236,17 @@ class api(object):
             except Exception as e:
                 log.warning("Unable to decode json from ovh api: %s" % str(e))
         log.warning("Wrong status_code: %s %s" % (_url, result.status_code))
+        if result.status_code == 403:
+            raise Exception("Unauthorized %s" % str(_url))
+        if result.status_code == 400:
+            raise Exception("BadRequest %s" % str(_url))
         return None
 
     def get(self, url, datas=None, need_auth=True):
         _url = url
         if datas:
             _url = "%s?%s" % (url, urlencode(datas))
-        return self._req("GET", _url, datas, need_auth)
+        return self._req("GET", _url, None, need_auth)
 
     def post(self, url, datas={}, need_auth=True):
         return self._req("POST", url, datas, need_auth)
@@ -253,7 +257,8 @@ class api(object):
     def authenticate(self):
         access_rules = [
             {'method': 'GET', 'path': '/domain/*'},
-            {'method': 'PUT', 'path': '/domain/zone/*'},
+            {'method': 'PUT', 'path': '/domain/zone/*'}, # update a subdomain
+            {'method': 'POST', 'path': '/domain/zone/*'}, # create new subdomain
         ]
         res = self.post('/auth/credential', need_auth=False,
                         datas={"accessRules":access_rules,"redirection":None})
@@ -262,13 +267,37 @@ class api(object):
         self._conf.save()
         return res
 
+    def updateHost(self, ip, create=True):
+        conf = self._conf.getSection("zone")
+        ttl = int(conf["ttl"]) if "ttl" in conf else 60 
+        if not conf:
+            raise Exception("zone not configured")
+        if not "subdomain" in conf:
+            raise Exception("subdomain field missing in 'zone'")
+        if not "domain" in conf:
+            raise Exception("domain field missing in 'zone'")
+        domain = conf["domain"]
+        subd = conf["subdomain"]
+        o = self.get("/domain/zone/%s/record" % (domain), {"subDomain": subd})
+        if not o or len(o) == 0:
+            if create:
+                res = self.post("/domain/zone/%s/record" % (domain), {"target": ip, 
+                                                                "ttl": ttl, 
+                                                                "subDomain": subd, 
+                                                                "fieldType": "A" if ip.count('.') == 3 else "AAAA"})
+            else:
+                raise Exception("Unable to find %s.%s on Ovh's API" % (subd, domain))
+        else:
+            res = self.put("/domain/zone/%s/record/%s" %(domain, o[0]), {"target": ip, "ttl": ttl, "subDomain": subd})
+        log.debug("updateHost: result: %s" % str(res))
+
 
 def main():
     n = net()
     ip = n.getIP()
     if not ip:
         log.error("Unable to get your ip. Are you connected to internet ?")
-        sys.stderr.write("Unable to get your ip. Are you connected to internet ?")
+        sys.stderr.write("Unable to get your ip. Are you connected to internet ?\n")
     l = local()
     store = l.load()
     if store and "ip" in store and store["ip"] == ip:
@@ -280,16 +309,13 @@ def main():
         res = a.authenticate()
         sys.stderr.write("Please visit this address to authenticate the script: %s\n" % str(res["validationUrl"]))
         return
-
-    print(str(a.get("/domain/zone")))
-    
-    return
-    #    Faire un get pour voir si la consumer_key fonctionne
-    #    Recuperer la liste des domaines (conf + api)
-    #    Faire le PUT
-    #  
-    l.save({"ip": ip})
-
+    try:
+        a.updateHost(ip)
+        l.save({"ip": ip})
+        print("Update OK")
+    except Exception as e:
+        log.error("Update fail: %s" % (str(e)))
+        sys.stderr.write("Error: %s\n" % (str(e)))
 
 if __name__=="__main__":
     main()

@@ -3,3 +3,6 @@ application_key = n39F1dvkdSiVzFrl
 application_secret = xxxxx
 #consumer_key = 
 
+[zone]
+domain = stevenmartins.fr
+subdomain = golgafrincham
