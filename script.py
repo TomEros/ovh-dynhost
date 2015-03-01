@@ -192,6 +192,11 @@ class api(object):
         if not self._application_secret:
             raise Exception("No application secret")
 
+        server_time = self.get('/auth/time', need_auth=False)
+        log.debug("server_time: %s" % str(server_time))
+        self._time_delta = server_time - int(time.time())
+
+
     def _req(self, method, url, datas=None, need_auth=True):
         headers = {
             'X-Ovh-Application': self._application_key
@@ -202,26 +207,22 @@ class api(object):
             headers['Content-type'] = 'application/json'
             body = json.dumps(datas)
         if need_auth:
-            server_time = self.get('/auth/time', need_auth=False)
-            #log.debug("server_time: %s" % str(server_time))
-            #time_delta = server_time - int(time.time())
-            #now = str(int(time.time()) + time_delta)
-            now = str(server_time)
-
+            if not self._consumer_key:
+                log.warning("auth needed without consumer key")
+                return None
+            now = str(int(time.time()) + self._time_delta)
             sign = "+".join([
                         self._application_secret, self._consumer_key,
                         method.upper(), _url,
                         body,
                         now
                         ]).encode('utf-8')
-            signature = hashlib.sha1(sign)
             log.debug("sign: %s" % (sign))
-            #signature.update(sign)
+            signature = hashlib.sha1(sign)
             headers['X-Ovh-Consumer'] = self._consumer_key
             headers['X-Ovh-Timestamp'] = now
             headers['X-Ovh-Signature'] = "$1$" + signature.hexdigest()
         try:
-
             result = self._session.request(method, _url, headers=headers,
                                            data=body)
             log.debug("%s %s > %s %s" % (method, _url, result.status_code, result.text))
@@ -251,7 +252,8 @@ class api(object):
 
     def authenticate(self):
         access_rules = [
-            {'method': 'GET', 'path': '/me'},
+            {'method': 'GET', 'path': '/domain/*'},
+            {'method': 'PUT', 'path': '/domain/zone/*'},
         ]
         res = self.post('/auth/credential', need_auth=False,
                         datas={"accessRules":access_rules,"redirection":None})
@@ -274,17 +276,20 @@ def main():
         return 
     log.info("Your ip changed to %s" % (ip))
     a = api()
-    # check
-    # si 403 ou pas de consumer_key: authenticate
-    res = a.authenticate()
-    print(str(res))
+    if not a.get("/domain/zone"):
+        res = a.authenticate()
+        sys.stderr.write("Please visit this address to authenticate the script: %s\n" % str(res["validationUrl"]))
+        return
+
+    print(str(a.get("/domain/zone")))
+    
+    return
+    #    Faire un get pour voir si la consumer_key fonctionne
+    #    Recuperer la liste des domaines (conf + api)
+    #    Faire le PUT
+    #  
     l.save({"ip": ip})
 
 
 if __name__=="__main__":
-    a = api()
-    #res = a.authenticate()
-    res = a.get("/me")
-    print(str(res))
-
-    #main()
+    main()
