@@ -1,11 +1,92 @@
 #
 # Steven MARTINS <steven.martins.fr@gmail.com>
+# -*- encoding: utf-8 -*-
 #
 
-import logging, requests, re, json, sys, os
+import logging, requests, re, json, sys, os, string, time, hashlib
+
+try:
+    from ConfigParser import ConfigParser, Error, NoOptionError
+except:
+    from configparser import ConfigParser, Error, NoOptionError
+
+from requests.exceptions import RequestException
+
+try:
+    from urllib import urlencode
+except:
+    from urllib.parse import urlencode
 
 logging.basicConfig(level=logging.DEBUG,format="%(asctime)-15s:%(levelname)s:%(threadName)s: %(message)s")
 log = logging.getLogger("net")
+
+class Conf:
+    def __init__(self, filename):
+        self._filename = filename
+        try:
+            self._config = ConfigParser(strict=False)
+        except:
+            self._config = ConfigParser()
+        try:
+            self._config.read(os.path.expanduser(filename))
+        except Exception as e:
+            logging.error("[Conf]" + self._filename + ": " + str(e))
+            raise Exception("Error during loading file " + self._filename)
+
+    def getSection(self, section):
+        data={}
+        try:
+            if section in self._config.sections():
+                for name, value in self._config.items(section):
+                    data[name] = value
+        except Exception as e:
+            logging.error("[Conf]" + self._filename + ": " + str(e))
+        for key, value in data.items():
+            if ", " in value:
+                data[key] = value.split(", ")
+        return data
+
+    def get(self, section, option, default=""):
+        val = default
+        try:
+            val = self._config.get(section, option)
+        except:
+            val = default
+        if ", " in val:
+            return val.split(", ")
+        return default
+
+    def sections(self):
+        return self._config.sections()
+
+    def setSection(self, section, values):
+        if not self._config.has_section(section):
+            self._config.add_section(section)
+        for k, v in values.items():
+            self._config.set(section, k, v)
+
+    def setValue(self, section, option, value):
+        if not self._config.has_section(section):
+            self._config.add_section(section)
+        self._config.set(section, option, value)
+
+    def removeSection(self, section):
+        if self._config.has_section(section):
+            self._config.remove_section(section)
+
+    def removeValue(self, section, option):
+        if self._config.has_section(section) and self._config.has_option(section, option):
+            self._config.remove_option(section, option)
+
+    def save(self):
+        with open(self._filename, 'w') as f:
+            self._config.write(f)
+
+    def getAll(self):
+        data = {}
+        for section in self.sections():
+            data[section] = self.getSection(section)
+        return data
 
 
 class net(object):
@@ -65,8 +146,8 @@ class net(object):
         return None
 
 class local(object):
-    def __init__(self, filepath=".", filename=".myip"):
-        self._filepath = filepath
+    def __init__(self, filepath="~", filename=".myip"):
+        self._filepath = os.path.expanduser(filepath)
         self._filename = filename
 
     def load(self):
@@ -88,7 +169,96 @@ class local(object):
 
 class api(object):
     def __init__(self):
-        pass
+        self._end_point = "https://eu.api.ovh.com/1.0"
+        self._conf = None
+        for conffile in ("dynhost.conf","~/dynhost.conf"):
+            try:
+                self._conf = Conf(os.path.expanduser(conffile))
+                break
+            except Exception as e:
+                log.warning("Conf error: %s" % str(e))
+                pass
+        if not self._conf:
+            raise Exception("Unable to load dynhost.conf configuration file.")
+        self._session = requests.Session()
+        c = self._conf.getSection("credentials")
+        if not c or len(c) == 0:
+            raise Exception("No Credentials available on configuration file.")
+        self._application_key = c["application_key"] if "application_key" in c else None
+        self._application_secret = c["application_secret"] if "application_secret" in c else None
+        self._consumer_key = c["consumer_key"] if "consumer_key" in c else None
+        if not self._application_key:
+            raise Exception("No application key")
+        if not self._application_secret:
+            raise Exception("No application secret")
+
+    def _req(self, method, url, datas=None, need_auth=True):
+        headers = {
+            'X-Ovh-Application': self._application_key
+        }
+        _url = "%s%s" % (self._end_point, url)
+        body = ""
+        if datas:
+            headers['Content-type'] = 'application/json'
+            body = json.dumps(datas)
+        if need_auth:
+            server_time = self.get('/auth/time', need_auth=False)
+            #log.debug("server_time: %s" % str(server_time))
+            #time_delta = server_time - int(time.time())
+            #now = str(int(time.time()) + time_delta)
+            now = str(server_time)
+
+            sign = "+".join([
+                        self._application_secret, self._consumer_key,
+                        method.upper(), _url,
+                        body,
+                        now
+                        ]).encode('utf-8')
+            signature = hashlib.sha1(sign)
+            log.debug("sign: %s" % (sign))
+            #signature.update(sign)
+            headers['X-Ovh-Consumer'] = self._consumer_key
+            headers['X-Ovh-Timestamp'] = now
+            headers['X-Ovh-Signature'] = "$1$" + signature.hexdigest()
+        try:
+
+            result = self._session.request(method, _url, headers=headers,
+                                           data=body)
+            log.debug("%s %s > %s %s" % (method, _url, result.status_code, result.text))
+            log.debug("header: %s, datas: %s" % (headers, body))
+        except Exception as e:
+            log.warning("Request: %s, error: %s " % (_url, str(e)))
+            return None
+        if result.status_code == 200:
+            try:
+                return result.json()
+            except Exception as e:
+                log.warning("Unable to decode json from ovh api: %s" % str(e))
+        log.warning("Wrong status_code: %s %s" % (_url, result.status_code))
+        return None
+
+    def get(self, url, datas=None, need_auth=True):
+        _url = url
+        if datas:
+            _url = "%s?%s" % (url, urlencode(datas))
+        return self._req("GET", _url, datas, need_auth)
+
+    def post(self, url, datas={}, need_auth=True):
+        return self._req("POST", url, datas, need_auth)
+
+    def put(self, url, datas={}, need_auth=True):
+        return self._req("PUT", url, datas, need_auth)
+
+    def authenticate(self):
+        access_rules = [
+            {'method': 'GET', 'path': '/me'},
+        ]
+        res = self.post('/auth/credential', need_auth=False,
+                        datas={"accessRules":access_rules,"redirection":None})
+        self._consumer_key = res['consumerKey']
+        self._conf.setValue("credentials", "consumer_key", self._consumer_key)
+        self._conf.save()
+        return res
 
 
 def main():
@@ -104,14 +274,17 @@ def main():
         return 
     log.info("Your ip changed to %s" % (ip))
     a = api()
-    
+    # check
+    # si 403 ou pas de consumer_key: authenticate
+    res = a.authenticate()
+    print(str(res))
     l.save({"ip": ip})
-    # getIP
-    # is changed?
-    #  if yes : call ovh api, then update .last_ip file
-
-
 
 
 if __name__=="__main__":
-    main()
+    a = api()
+    #res = a.authenticate()
+    res = a.get("/me")
+    print(str(res))
+
+    #main()
