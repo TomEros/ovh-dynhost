@@ -53,7 +53,7 @@ Update OK
 
 ## Lancement automatique
 
-Le plus simple conciste à ajouter une règle crontab pour que le script puisse s'exécuter à intervalle régulier.
+Le plus simple consiste à ajouter une règle crontab pour que le script puisse s'exécuter à intervalle régulier.
 
 ```Bash
 crontab -e
