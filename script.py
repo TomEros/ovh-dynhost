@@ -272,23 +272,31 @@ class api(object):
         ttl = int(conf["ttl"]) if "ttl" in conf else 60 
         if not conf:
             raise Exception("zone not configured")
-        if not "subdomain" in conf:
-            raise Exception("subdomain field missing in 'zone'")
         if not "domain" in conf:
             raise Exception("domain field missing in 'zone'")
         domain = conf["domain"]
-        subd = conf["subdomain"]
-        o = self.get("/domain/zone/%s/record" % (domain), {"subDomain": subd})
+        subd = conf["subdomain"] if "subdomain" in conf else ""
+        dataEdit = {"target":ip, "ttl":ttl}
+        dataFieldType = {"fieldType":"A" if ip.count('.') == 3 else "AAAA"}
+        dataSubDomain = {"subDomain":subd} if len(subd) > 0 else dict()
+        dataGet = dict()
+        dataGet.update(dataFieldType)
+        dataGet.update(dataSubDomain)
+        o = self.get("/domain/zone/%s/record" % (domain), dataGet)
         if not o or len(o) == 0:
             if create:
-                res = self.post("/domain/zone/%s/record" % (domain), {"target": ip, 
-                                                                "ttl": ttl, 
-                                                                "subDomain": subd, 
-                                                                "fieldType": "A" if ip.count('.') == 3 else "AAAA"})
+                dataPost = dict()
+                dataPost.update(dataEdit)
+                dataPost.update(dataSubDomain)
+                dataPost.update(dataFieldType)
+                res = self.post("/domain/zone/%s/record" % (domain), dataPost)
             else:
                 raise Exception("Unable to find %s.%s on Ovh's API" % (subd, domain))
         else:
-            res = self.put("/domain/zone/%s/record/%s" %(domain, o[0]), {"target": ip, "ttl": ttl, "subDomain": subd})
+            dataPut = dict()
+            dataPut.update(dataEdit)
+            dataPut.update(dataSubDomain)
+            res = self.put("/domain/zone/%s/record/%s" %(domain, o[0]), dataPut)
         log.debug("updateHost: result: %s" % str(res))
 
 

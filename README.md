@@ -34,6 +34,8 @@ subdomain = golgafrincham
 Vous devez juste spécifier le nom de domaine ainsi que le sous-domaine que vous souhaitez utiliser en tant que dyndns.
 Le sous-domaine sera automatiquement créé s'il n'existe pas.
 
+Si aucun sous-domaine n'est spécifié, alors c'est le record racine du domaine qui est modifié.
+
 Pour tester le script:
 ```Bash
 python script.py
