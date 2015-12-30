@@ -111,7 +111,7 @@ class net(object):
         except ValueError as e:
             log.warning("Unable to parse '%s'" % text)
         return None
- 
+
     def _json(self, text, field="ip"):
         try:
             j = json.loads(text)
@@ -131,7 +131,7 @@ class net(object):
             return (r.text)
         log.warning("_get: bad status_code: %s" % (r.status_code))
         return None
-        
+
     def getIP(self):
         for (url, parser) in self._urls:
             value = self._get(url)
@@ -269,7 +269,7 @@ class api(object):
 
     def updateHost(self, ip, create=True):
         conf = self._conf.getSection("zone")
-        ttl = int(conf["ttl"]) if "ttl" in conf else 60 
+        ttl = int(conf["ttl"]) if "ttl" in conf else 60
         if not conf:
             raise Exception("zone not configured")
         if not "domain" in conf:
@@ -298,6 +298,8 @@ class api(object):
             dataPut.update(dataSubDomain)
             res = self.put("/domain/zone/%s/record/%s" %(domain, o[0]), dataPut)
         log.debug("updateHost: result: %s" % str(res))
+        res = self.post("/domain/zone/%s/refresh" % (domain), {})
+        log.debug("refreshZone: result: %s" % str(res))
 
 
 def main():
@@ -310,7 +312,7 @@ def main():
     store = l.load()
     if store and "ip" in store and store["ip"] == ip:
         log.info("Your ip is the same since last check. Nothing to do.")
-        return 
+        return
     log.info("Your ip changed to %s" % (ip))
     a = api()
     if not a.get("/domain/zone"):
